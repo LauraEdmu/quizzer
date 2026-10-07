@@ -30,6 +30,8 @@ from waitress import serve
 BASE_DIR = Path(__file__).resolve().parent
 QUIZ_DIR = BASE_DIR / "quizzes"
 AUDIO_DIR = QUIZ_DIR / "audio"
+VIDEO_DIR = QUIZ_DIR / "video"
+IMAGE_DIR = QUIZ_DIR / "image"
 DATA_DIR = BASE_DIR / "data"
 DB_FILE = DATA_DIR / "progress.sqlite3"
 COOKIE_NAME = "quiz_id"
@@ -43,6 +45,23 @@ AUDIO_FORMATS = {
     "audio number",
     "audio multiple choice",
 }
+VIDEO_FORMATS = {
+    "video simple",
+    "video regex",
+    "video number",
+    "video multiple choice",
+}
+IMAGE_FORMATS = {
+    "image simple",
+    "image regex",
+    "image number",
+    "image multiple choice",
+}
+IMAGE_EXTENSIONS = {
+    ".jpg", ".jpeg", ".jfif", ".png", ".apng", ".gif",
+    ".webp", ".avif", ".bmp", ".svg", ".ico",
+}
+MEDIA_FORMATS = AUDIO_FORMATS | VIDEO_FORMATS | IMAGE_FORMATS
 
 app = Flask(__name__)
 app.config.update(
@@ -106,21 +125,40 @@ def is_audio_format(value: str) -> bool:
     return value in AUDIO_FORMATS
 
 
+def is_video_format(value: str) -> bool:
+    """Whether a normalised format includes an MP4 video clip."""
+    return value in VIDEO_FORMATS
+
+
+def is_image_format(value: str) -> bool:
+    """Whether a normalised format includes an image."""
+    return value in IMAGE_FORMATS
+
+
+def is_media_format(value: str) -> bool:
+    """Whether a normalised format includes audio, video, or image media."""
+    return value in MEDIA_FORMATS
+
+
 def answer_format(value: str) -> str:
     """Return the underlying answer type for a normalised question format."""
     if value == "audio":
         return "regex"
     if value.startswith("audio "):
         return value.removeprefix("audio ")
+    if value.startswith("video "):
+        return value.removeprefix("video ")
+    if value.startswith("image "):
+        return value.removeprefix("image ")
     return value
 
 
-def audio_question_parts(value: str) -> tuple[str, str] | None:
-    """Read an audio question written as 'question text|filename'.
+def media_question_parts(value: str) -> tuple[str, str] | None:
+    """Read a media question written as 'question text|filename'.
 
     The final pipe is used as the separator so the visible prompt may itself
-    contain a pipe. Audio filenames must refer directly to quizzes/audio and
-    cannot contain path separators.
+    contain a pipe. Media filenames must refer directly to their media folder
+    and cannot contain path separators.
     """
     prompt, separator, filename = value.rpartition("|")
     prompt = prompt.strip()
@@ -134,24 +172,58 @@ def audio_question_parts(value: str) -> tuple[str, str] | None:
     return prompt, filename
 
 
-def audio_file_path(question: dict[str, str]) -> Path | None:
-    """Return the configured audio path for an audio question."""
-    if not is_audio_format(question.get("format", "")):
+def audio_question_parts(value: str) -> tuple[str, str] | None:
+    """Backwards-compatible wrapper for parsing audio question text."""
+    return media_question_parts(value)
+
+
+def media_kind(question: dict[str, str]) -> str | None:
+    """Return 'audio', 'video', or 'image' for a media question."""
+    fmt = question.get("format", "")
+    if is_audio_format(fmt):
+        return "audio"
+    if is_video_format(fmt):
+        return "video"
+    if is_image_format(fmt):
+        return "image"
+    return None
+
+
+def media_file_path(question: dict[str, str]) -> Path | None:
+    """Return the configured media path for an audio/video question."""
+    kind = media_kind(question)
+    if kind is None:
         return None
-    parts = audio_question_parts(question.get("question", ""))
-    return None if parts is None else AUDIO_DIR / parts[1]
+    parts = media_question_parts(question.get("question", ""))
+    if parts is None:
+        return None
+    directory = {
+        "audio": AUDIO_DIR,
+        "video": VIDEO_DIR,
+        "image": IMAGE_DIR,
+    }[kind]
+    return directory / parts[1]
 
 
-def audio_is_available(question: dict[str, str]) -> bool:
-    """Whether an audio question has its referenced file on disk."""
-    path = audio_file_path(question)
+def media_is_available(question: dict[str, str]) -> bool:
+    """Whether a media question has its referenced file on disk."""
+    path = media_file_path(question)
     return path is not None and path.is_file()
 
 
-def question_counts(question: dict[str, str]) -> bool:
-    """Missing-audio questions are shown as skipped but do not count."""
-    return not is_audio_format(question.get("format", "")) or audio_is_available(question)
+def audio_file_path(question: dict[str, str]) -> Path | None:
+    """Backwards-compatible audio-only path helper."""
+    return media_file_path(question) if is_audio_format(question.get("format", "")) else None
 
+
+def audio_is_available(question: dict[str, str]) -> bool:
+    """Backwards-compatible audio availability helper."""
+    return is_audio_format(question.get("format", "")) and media_is_available(question)
+
+
+def question_counts(question: dict[str, str]) -> bool:
+    """Missing-media questions are shown as skipped but do not count."""
+    return not is_media_format(question.get("format", "")) or media_is_available(question)
 
 def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
     """Load a quiz on demand; edits reset progress for that quiz only."""
@@ -169,7 +241,7 @@ def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
     if not isinstance(data, list) or not data:
         raise QuizLoadError("The quiz must contain a non-empty JSON array of questions.")
 
-    audio_version_data: list[dict[str, object]] = []
+    media_version_data: list[dict[str, object]] = []
 
     for number, item in enumerate(data, start=1):
         if not isinstance(item, dict):
@@ -181,7 +253,7 @@ def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
         item["format"] = " ".join(
             item["format"].strip().lower().replace("_", " ").replace("-", " ").split()
         )
-        supported_formats = {"simple", "multiple choice", "regex", "number"} | AUDIO_FORMATS
+        supported_formats = {"simple", "multiple choice", "regex", "number"} | MEDIA_FORMATS
         if item["format"] not in supported_formats:
             raise QuizLoadError(f"Question {number}: unsupported format {item['format']!r}.")
 
@@ -207,33 +279,55 @@ def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
                     "with valid numbers and minimum <= maximum."
                 )
 
-        if is_audio_format(item["format"]):
-            parts = audio_question_parts(item["question"])
-            if parts is None:
+        if is_media_format(item["format"]):
+            parts = media_question_parts(item["question"])
+            kind_name = media_kind(item)
+            if parts is None or kind_name is None:
+                if is_audio_format(item["format"]):
+                    folder, example = "audio", "audiofile.mp3"
+                elif is_video_format(item["format"]):
+                    folder, example = "video", "videofile.mp4"
+                else:
+                    folder, example = "image", "imagefile.png"
                 raise QuizLoadError(
-                    f"Question {number}: audio question must be written as "
-                    "'question text|audiofile.mp3', using a filename directly inside quizzes/audio."
+                    f"Question {number}: {folder} question must be written as "
+                    f"'question text|{example}', using a filename directly inside quizzes/{folder}."
                 )
             _, filename = parts
-            path = AUDIO_DIR / filename
+            if kind_name == "video" and Path(filename).suffix.casefold() != ".mp4":
+                raise QuizLoadError(
+                    f"Question {number}: video files must use the .mp4 extension."
+                )
+            if kind_name == "image" and Path(filename).suffix.casefold() not in IMAGE_EXTENSIONS:
+                raise QuizLoadError(
+                    f"Question {number}: unsupported image extension. "
+                    "Use JPG/JPEG/JFIF, PNG/APNG, GIF, WebP, AVIF, BMP, SVG, or ICO."
+                )
+            directory = {
+                "audio": AUDIO_DIR,
+                "video": VIDEO_DIR,
+                "image": IMAGE_DIR,
+            }[kind_name]
+            path = directory / filename
+            entry: dict[str, object] = {"kind": kind_name, "filename": filename}
             try:
                 stat = path.stat()
             except (FileNotFoundError, OSError):
-                audio_version_data.append({"filename": filename, "exists": False})
+                entry["exists"] = False
             else:
-                audio_version_data.append(
+                entry.update(
                     {
-                        "filename": filename,
                         "exists": path.is_file(),
                         "size": stat.st_size,
                         "mtime_ns": stat.st_mtime_ns,
                     }
                 )
+            media_version_data.append(entry)
 
-    # Include audio file presence/metadata in the version. This prevents a score
-    # obtained with one question count from being reused if an audio file is
-    # later added, removed, or replaced.
-    version_payload = {"questions": data, "audio": audio_version_data}
+    # Include media file presence/metadata in the version. This prevents a score
+    # obtained with one question count from being reused if an audio/video/image
+    # file is later added, removed, or replaced.
+    version_payload = {"questions": data, "media": media_version_data}
     version = hashlib.sha256(
         json.dumps(version_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()[:16]
@@ -270,6 +364,8 @@ CREATE TABLE IF NOT EXISTS attempts (
 def initialise_database() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     with db_connection() as connection:
         connection.execute("PRAGMA journal_mode=WAL")
         columns = {
@@ -338,9 +434,28 @@ def with_cookie(response, visitor_id: str, is_new: bool):
 @app.route("/quiz-audio/<filename>")
 def quiz_audio(filename: str):
     """Serve audio files from quizzes/audio without exposing other paths."""
-    if audio_question_parts(f"x|{filename}") is None:
+    if media_question_parts(f"x|{filename}") is None:
         abort(404)
     return send_from_directory(AUDIO_DIR, filename, conditional=True, max_age=3600)
+
+
+@app.route("/quiz-video/<filename>")
+def quiz_video(filename: str):
+    """Serve MP4 video files from quizzes/video without exposing other paths."""
+    if media_question_parts(f"x|{filename}") is None or Path(filename).suffix.casefold() != ".mp4":
+        abort(404)
+    return send_from_directory(VIDEO_DIR, filename, conditional=True, max_age=3600)
+
+
+@app.route("/quiz-image/<filename>")
+def quiz_image(filename: str):
+    """Serve supported image files from quizzes/image without exposing other paths."""
+    if (
+        media_question_parts(f"x|{filename}") is None
+        or Path(filename).suffix.casefold() not in IMAGE_EXTENSIONS
+    ):
+        abort(404)
+    return send_from_directory(IMAGE_DIR, filename, conditional=True, max_age=3600)
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -445,10 +560,10 @@ def quiz_page(name: str):
 
         position = state["position"]
         current_question = questions[position] if position < len(questions) else None
-        current_audio_missing = bool(
+        current_media_missing = bool(
             current_question
-            and is_audio_format(current_question["format"])
-            and not audio_is_available(current_question)
+            and is_media_format(current_question["format"])
+            and not media_is_available(current_question)
         )
 
         handled = False
@@ -476,7 +591,7 @@ def quiz_page(name: str):
                     )
                     handled = True
 
-                elif action == "skip" and current_audio_missing and not state["answered"]:
+                elif action == "skip" and current_media_missing and not state["answered"]:
                     connection.execute(
                         """UPDATE attempts SET position = position + 1, answered = 0,
                            last_correct = 0, last_response = ''
@@ -489,7 +604,7 @@ def quiz_page(name: str):
                     action == "submit"
                     and not state["answered"]
                     and current_question is not None
-                    and not current_audio_missing
+                    and not current_media_missing
                 ):
                     submitted = request.form.get("answer", "")
                     if not submitted.strip() or len(submitted) > 300:
@@ -525,9 +640,12 @@ def quiz_page(name: str):
     finished = position >= len(questions)
     question = None if finished else questions[position]
     question_is_audio = bool(question and is_audio_format(question["format"]))
+    question_is_video = bool(question and is_video_format(question["format"]))
+    question_is_image = bool(question and is_image_format(question["format"]))
+    question_is_media = question_is_audio or question_is_video or question_is_image
     question_answer_format = answer_format(question["format"]) if question else None
-    audio_missing = bool(
-        question and question_is_audio and not audio_is_available(question)
+    media_missing = bool(
+        question and question_is_media and not media_is_available(question)
     )
 
     options: list[str] = []
@@ -537,21 +655,27 @@ def quiz_page(name: str):
         random.Random(seed).shuffle(options)
 
     question_prompt = question["question"] if question else ""
-    audio_filename = None
-    audio_url = None
-    if question and question_is_audio:
-        parts = audio_question_parts(question["question"])
+    media_filename = None
+    media_url = None
+    current_media_kind = media_kind(question) if question else None
+    if question and question_is_media:
+        parts = media_question_parts(question["question"])
         if parts is not None:
-            question_prompt, audio_filename = parts
-            if not audio_missing:
-                audio_url = url_for("quiz_audio", filename=audio_filename, v=version)
+            question_prompt, media_filename = parts
+            if not media_missing:
+                endpoint = {
+                    "audio": "quiz_audio",
+                    "video": "quiz_video",
+                    "image": "quiz_image",
+                }[current_media_kind]
+                media_url = url_for(endpoint, filename=media_filename, v=version)
 
     total = sum(1 for item in questions if question_counts(item))
     completed_before = sum(1 for item in questions[:position] if question_counts(item))
     completed = total if finished else completed_before
-    if question and not audio_missing and state["answered"]:
+    if question and not media_missing and state["answered"]:
         completed += 1
-    current_number = completed_before + 1 if question and not audio_missing else None
+    current_number = completed_before + 1 if question and not media_missing else None
     progress_percent = (100 * completed / total) if total else 0
 
     response = make_response(render_template(
@@ -569,13 +693,17 @@ def quiz_page(name: str):
         question=question,
         question_prompt=question_prompt,
         question_is_audio=question_is_audio,
+        question_is_video=question_is_video,
+        question_is_image=question_is_image,
+        question_is_media=question_is_media,
+        media_kind=current_media_kind,
         question_answer_format=question_answer_format,
         question_is_multiple_choice=(question_answer_format == "multiple choice"),
         question_is_number=(question_answer_format == "number"),
         options=options,
-        audio_missing=audio_missing,
-        audio_filename=audio_filename,
-        audio_url=audio_url,
+        media_missing=media_missing,
+        media_filename=media_filename,
+        media_url=media_url,
         last_correct=bool(state["last_correct"]),
         last_response=state["last_response"],
         csrf=state["csrf"],

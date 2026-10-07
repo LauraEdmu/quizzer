@@ -48,6 +48,10 @@
           Your browser does not support the video player.
         </video>
       </div>
+    {% elif question_is_image and not media_missing %}
+      <div class="image-player-wrap">
+        <img class="quiz-image" src="{{ media_url }}" alt="Image for this quiz question">
+      </div>
     {% endif %}
 
     {% if media_missing %}

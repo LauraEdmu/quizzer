@@ -1,6 +1,6 @@
 # Flask Quiz
 
-A multi-quiz Flask + Waitress web app with a pink background, dark/light toggle, audio/video questions, and cookie-identified, SQLite-backed progress. No accounts required.
+A multi-quiz Flask + Waitress web app with a pink background, dark/light toggle, audio/video/image questions, and cookie-identified, SQLite-backed progress. No accounts required.
 
 **Installation**
 
@@ -97,6 +97,30 @@ A quiz file is a non-empty JSON array of questions:
     "format": "video multiple choice",
     "answer": "Keyboard|Mouse|Monitor|Microphone",
     "display_answer": "Keyboard"
+  },
+  {
+    "question": "Who is shown in this image?|person.jpg",
+    "format": "image simple",
+    "answer": "Laura",
+    "display_answer": "Laura"
+  },
+  {
+    "question": "What word is shown?|word.png",
+    "format": "image regex",
+    "answer": "colou?r",
+    "display_answer": "colour or color"
+  },
+  {
+    "question": "Roughly how many objects are visible?|objects.webp",
+    "format": "image number",
+    "answer": "9|11",
+    "display_answer": "About 10 (accepted range: 9–11)"
+  },
+  {
+    "question": "Which animal is shown?|animal.gif",
+    "format": "image multiple choice",
+    "answer": "Cat|Dog|Rabbit|Fox",
+    "display_answer": "Cat"
   }
 ]
 ```
@@ -118,11 +142,17 @@ A quiz file is a non-empty JSON array of questions:
   - `video number`: same inclusive `minimum|maximum` numeric range as `number`.
   - `video multiple choice`: same rule as `multiple choice`; the **first** `|`-separated option is correct and the choices are shuffled before display.
 - If a video file is missing, the visitor is shown an explicit **Video unavailable — question skipped** message. The question is excluded from the quiz total and cannot affect the score. Video filenames cannot contain `/` or `\` path separators.
+- Image questions use the same syntax: `"the visible question|imagefile.png"`. Image files live directly inside `quizzes/image/`. Supported formats are **JPG/JPEG/JFIF, PNG/APNG, GIF, WebP, AVIF, BMP, SVG, and ICO**. Animated GIFs/WebP files animate normally in browsers. Four image answer formats are available:
+  - `image simple`: same direct, case-insensitive comparison as `simple`.
+  - `image regex`: same case-insensitive Python regex **full match** as `regex`.
+  - `image number`: same inclusive `minimum|maximum` numeric range as `number`.
+  - `image multiple choice`: same rule as `multiple choice`; the **first** `|`-separated option is correct and the choices are shuffled before display.
+- If an image file is missing, the visitor is shown an explicit **Image unavailable — question skipped** message. The question is excluded from the quiz total and cannot affect the score. Image filenames cannot contain `/` or `\` path separators.
 - `display_answer`: what visitors see after they submit an answer.
 
 **Editing quizzes**
 
-New quizzes and changes to quiz JSON are loaded automatically without restarting the server. Changing a quiz file resets progress for **that quiz only**. Adding, removing, or replacing an audio or video file referenced by that quiz also resets that quiz's progress so its score and question total stay consistent. Renaming a quiz file creates a new quiz name with separate progress.
+New quizzes and changes to quiz JSON are loaded automatically without restarting the server. Changing a quiz file resets progress for **that quiz only**. Adding, removing, or replacing an audio, video, or image file referenced by that quiz also resets that quiz's progress so its score and question total stay consistent. Renaming a quiz file creates a new quiz name with separate progress.
 
 **Progress, themes and privacy**
 
