@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ quiz_name | replace('-', ' ') | title }} · Quiz{% endblock %}
+{% block content %}
+  <div class="top">
+    <div>
+      <a class="back" href="{{ url_for('home') }}">← All quizzes</a>
+      <h1>{{ quiz_name | replace('-', ' ') | title }}</h1>
+    </div>
+    <span class="meta muted score">{{ score }} correct · {{ total }} questions</span>
+  </div>
+  <div class="track" role="progressbar" aria-label="Quiz progress"
+       aria-valuemin="0" aria-valuemax="{{ total }}" aria-valuenow="{{ completed }}">
+    <div class="bar" style="width: {{ progress_percent }}%"></div>
+  </div>
+
+  {% if finished %}
+    <h2>All done! ✨</h2>
+    <div class="final">{{ score }} / {{ total }}</div>
+    {% if total %}
+      <p class="muted">You scored {{ (100 * score / total) | round | int }}%. Fancy another go?</p>
+    {% else %}
+      <p class="muted">No scoreable questions were available. Any missing-media questions were skipped.</p>
+    {% endif %}
+    <form method="post">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="primary" name="action" value="reset">Start again ↻</button>
+    </form>
+    <a class="text-link" href="{{ url_for('home') }}">Choose another quiz →</a>
+  {% else %}
+    {% if media_missing %}
+      <p class="meta muted question-number">Skipped question · not counted</p>
+    {% else %}
+      <p class="meta muted question-number">Question {{ current_number }} of {{ total }}</p>
+    {% endif %}
+    <h2>{{ question_prompt }}</h2>
+
+    {% if question_is_audio and not media_missing %}
+      <div class="audio-player-wrap">
+        <audio class="audio-player" controls preload="metadata">
+          <source src="{{ media_url }}">
+          Your browser does not support the audio player.
+        </audio>
+      </div>
+    {% elif question_is_video and not media_missing %}
+      <div class="video-player-wrap">
+        <video class="video-player" controls preload="metadata" playsinline>
+          <source src="{{ media_url }}" type="video/mp4">
+          Your browser does not support the video player.
+        </video>
+      </div>
+    {% endif %}
+
+    {% if media_missing %}
+      <section class="feedback skipped" aria-live="polite">
+        <h3>⚠ {{ media_kind | title }} unavailable — question skipped</h3>
+        <p>Couldn’t find <code>quizzes/{{ media_kind }}/{{ media_filename }}</code>.</p>
+        <p class="muted">This question does not count towards your score or the quiz total.</p>
+      </section>
+      <form method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="primary" name="action" value="skip">
+          {{ 'View results' if position + 1 == raw_total else 'Continue →' }}
+        </button>
+      </form>
+
+    {% elif answered %}
+      <section class="feedback {{ 'incorrect' if not last_correct else '' }}" aria-live="polite">
+        <h3>{{ '✓ Correct!' if last_correct else '✗ Not quite' }}</h3>
+        <p><strong>Answer:</strong> {{ question.display_answer }}</p>
+        {% if not last_correct and last_response %}
+          <p class="muted">You entered: {{ last_response }}</p>
+        {% endif %}
+      </section>
+      <form method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="primary" name="action" value="next">
+          {{ 'View results' if position + 1 == raw_total else 'Next question →' }}
+        </button>
+      </form>
+
+    {% else %}
+      <form method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="submit">
+        {% if question_is_multiple_choice %}
+          <div class="options">
+            {% for choice in options %}
+              <label class="option"><input type="radio" name="answer" value="{{ choice }}" required>
+                <span>{{ choice }}</span></label>
+            {% endfor %}
+          </div>
+        {% elif question_is_number %}
+          <label class="field-label" for="answer">Your answer</label>
+          <input class="text-input response" id="answer" type="text" inputmode="decimal" maxlength="300"
+                 name="answer" placeholder="e.g. £1,290.50" autocomplete="off" autofocus required>
+        {% else %}
+          <label class="field-label" for="answer">Your answer</label>
+          <input class="text-input response" id="answer" type="text" name="answer"
+                 placeholder="Type your answer…" maxlength="300" autocomplete="off" autofocus required>
+        {% endif %}
+        {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+        <button class="primary" type="submit">Check answer →</button>
+      </form>
+    {% endif %}
+  {% endif %}
+
+  {% if not finished and (position > 0 or answered or media_missing) %}
+    <div class="card-footer">
+      <form method="post" onsubmit="return confirm('Reset this quiz’s progress?')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="plain" name="action" value="reset">Reset this quiz</button>
+      </form>
+    </div>
+  {% endif %}
+{% endblock %}

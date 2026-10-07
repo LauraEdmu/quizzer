@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F5A9B8">
+  <title>{% block title %}Quiz{% endblock %}</title>
+  <script>
+    try {
+      if (localStorage.getItem('quiz-theme') === 'dark')
+        document.documentElement.dataset.theme = 'dark';
+    } catch (_) {}
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}" defer></script>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode">☾ Dark mode</button>
+  <div class="layout">
+    <main class="card">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <footer class="made-by">
+    Made By:
+    <a href="https://www.twitch.tv/laurasmaur" target="_blank" rel="noopener noreferrer">twitch.tv/laurasmaur</a>
+    <span aria-hidden="true">/</span>
+    <a href="https://github.com/LauraEdmu" target="_blank" rel="noopener noreferrer">github.com/LauraEdmu</a>
+  </footer>
+</body>
+</html>

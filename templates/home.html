@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Choose a quiz{% endblock %}
+{% block content %}
+  <div class="eyebrow">✦ QUIZ TIME ✦</div>
+  <h1>Ready for a quiz?</h1>
+  <p class="muted intro">Enter a quiz name to begin, or carry on from where you left off.</p>
+
+  <form action="{{ url_for('home') }}" method="post">
+    <label class="field-label" for="quiz_name">Quiz name</label>
+    <input class="text-input" id="quiz_name" type="text" name="quiz_name"
+           placeholder="e.g. general" maxlength="64" value="{{ typed_name }}"
+           autocomplete="off" spellcheck="false" autofocus required>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <button class="primary" type="submit">Start or resume quiz →</button>
+  </form>
+
+  {% if previous %}
+    <section class="history">
+      <h2 class="history-heading">Your quizzes</h2>
+      <div class="history-list">
+        {% for item in previous %}
+          <div class="history-item">
+            <a class="history-entry" href="{{ url_for('quiz_page', name=item.quiz_name) }}">
+              <span class="history-name">{{ item.quiz_name | replace('-', ' ') }}</span>
+              <span class="muted small">{{ item.score }} correct · Continue →</span>
+            </a>
+            <form method="post" onsubmit="return confirm('Reset progress for {{ item.quiz_name }}?')">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="quiz_name" value="{{ item.quiz_name }}">
+              <button class="plain reset-item" type="submit" name="action" value="reset_one">Reset</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+      <form class="reset-all" method="post" onsubmit="return confirm('Reset ALL your quiz progress? This cannot be undone.')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="plain danger" type="submit" name="action" value="reset_all">Reset all quiz progress</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}
