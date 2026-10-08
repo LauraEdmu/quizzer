@@ -34,6 +34,18 @@
     {% endif %}
     <h2>{{ question_prompt }}</h2>
 
+    {% if timer_remaining is not none and not answered and not media_missing %}
+      <div class="question-timer" id="question-timer" data-remaining="{{ timer_remaining }}"
+           role="timer" aria-live="polite" aria-label="Time remaining">
+        <span class="timer-icon" aria-hidden="true">⏱</span>
+        <span>Time left: <strong id="timer-countdown">…</strong></span>
+      </div>
+      <form id="timeout-form" method="post" hidden>
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="timeout">
+      </form>
+    {% endif %}
+
     {% if question_is_audio and not media_missing %}
       <div class="audio-player-wrap">
         <audio class="audio-player" controls preload="metadata">
@@ -69,7 +81,15 @@
 
     {% elif answered %}
       <section class="feedback {{ 'incorrect' if not last_correct else '' }}" aria-live="polite">
-        <h3>{{ '✓ Correct!' if last_correct else '✗ Not quite' }}</h3>
+        <h3>
+          {% if last_timed_out %}⌛ Time’s up
+          {% elif last_correct %}✓ Correct!
+          {% else %}✗ Not quite
+          {% endif %}
+        </h3>
+        {% if last_timed_out %}
+          <p class="muted">The timer expired before an answer was submitted.</p>
+        {% endif %}
         <p><strong>Answer:</strong> {{ question.display_answer }}</p>
 
         {% if display_media %}
@@ -100,7 +120,7 @@
           </div>
         {% endif %}
 
-        {% if not last_correct and last_response %}
+        {% if not last_timed_out and not last_correct and last_response %}
           <p class="muted">You entered: {{ last_response }}</p>
         {% endif %}
       </section>
@@ -112,7 +132,7 @@
       </form>
 
     {% else %}
-      <form method="post">
+      <form method="post" id="answer-form">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="action" value="submit">
         {% if question_is_multiple_choice %}
@@ -137,6 +157,50 @@
         <button class="primary" type="submit">Check answer →</button>
       </form>
     {% endif %}
+  {% endif %}
+
+  {% if timer_remaining is not none and not answered and not media_missing %}
+    <script>
+      (() => {
+        const timer = document.getElementById('question-timer');
+        const countdown = document.getElementById('timer-countdown');
+        const timeoutForm = document.getElementById('timeout-form');
+        if (!timer || !countdown || !timeoutForm) return;
+
+        const initialSeconds = Number(timer.dataset.remaining);
+        if (!Number.isFinite(initialSeconds)) return;
+
+        const deadline = performance.now() + Math.max(0, initialSeconds * 1000);
+        let fired = false;
+        let intervalId = null;
+
+        const tick = () => {
+          const remainingMs = Math.max(0, deadline - performance.now());
+          const seconds = Math.ceil(remainingMs / 1000);
+          countdown.textContent = `${seconds}s`;
+          timer.classList.toggle('timer-warning', remainingMs > 0 && remainingMs <= 5000);
+
+          if (remainingMs <= 0 && !fired) {
+            fired = true;
+            countdown.textContent = '0s';
+            timer.classList.remove('timer-warning');
+            timer.classList.add('timer-expired');
+            if (intervalId !== null) clearInterval(intervalId);
+
+            const answerForm = document.getElementById('answer-form');
+            if (answerForm) {
+              answerForm.querySelectorAll('input, button').forEach((control) => {
+                control.disabled = true;
+              });
+            }
+            HTMLFormElement.prototype.submit.call(timeoutForm);
+          }
+        };
+
+        tick();
+        if (!fired) intervalId = window.setInterval(tick, 100);
+      })();
+    </script>
   {% endif %}
 
   {% if not finished and (position > 0 or answered or media_missing) %}

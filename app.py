@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import re
 import secrets
 import sqlite3
+import time
 import unicodedata
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
@@ -265,6 +267,18 @@ def question_counts(question: dict[str, str]) -> bool:
     """Missing-media questions are shown as skipped but do not count."""
     return not is_media_format(question.get("format", "")) or media_is_available(question)
 
+
+def question_timer_seconds(question: dict[str, object] | None) -> float | None:
+    """Return a validated optional per-question timer in seconds."""
+    if not question or "timer" not in question:
+        return None
+    value = question.get("timer")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    seconds = float(value)
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
 def load_quiz(name: str) -> tuple[list[dict[str, str]], dict[str, str], str]:
     """Load a quiz on demand; edits reset progress for that quiz only."""
     if not QUIZ_SLUG_PATTERN.fullmatch(name):
@@ -311,6 +325,18 @@ def load_quiz(name: str) -> tuple[list[dict[str, str]], dict[str, str], str]:
             if not isinstance(item["example"], str):
                 raise QuizLoadError(f"Question {number}: 'example' must be a string when provided.")
             item["example"] = item["example"].strip()
+
+        if "timer" in item:
+            timer = item["timer"]
+            if (
+                isinstance(timer, bool)
+                or not isinstance(timer, (int, float))
+                or not math.isfinite(float(timer))
+                or float(timer) <= 0
+            ):
+                raise QuizLoadError(
+                    f"Question {number}: 'timer' must be a positive number of seconds."
+                )
 
         item["format"] = " ".join(
             item["format"].strip().lower().replace("_", " ").replace("-", " ").split()
@@ -430,6 +456,8 @@ CREATE TABLE IF NOT EXISTS attempts (
     answered INTEGER NOT NULL DEFAULT 0,
     last_correct INTEGER NOT NULL DEFAULT 0,
     last_response TEXT NOT NULL DEFAULT '',
+    last_timed_out INTEGER NOT NULL DEFAULT 0,
+    timer_started_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (id, quiz_name)
 )
 """
@@ -460,6 +488,21 @@ def initialise_database() -> None:
             connection.execute("DROP TABLE old_attempts")
         else:
             connection.execute(CREATE_ATTEMPTS)
+
+        # Add timer state to existing multi-quiz databases without discarding
+        # anyone's progress. Older installations simply receive the defaults.
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(attempts)").fetchall()
+        }
+        if "last_timed_out" not in columns:
+            connection.execute(
+                "ALTER TABLE attempts ADD COLUMN last_timed_out INTEGER NOT NULL DEFAULT 0"
+            )
+        if "timer_started_at" not in columns:
+            connection.execute(
+                "ALTER TABLE attempts ADD COLUMN timer_started_at REAL NOT NULL DEFAULT 0"
+            )
+
         connection.execute("""CREATE TABLE IF NOT EXISTS visitor_tokens (
             id TEXT PRIMARY KEY,
             csrf TEXT NOT NULL
@@ -624,7 +667,8 @@ def quiz_page(name: str):
         if state["version"] != version:
             connection.execute(
                 """UPDATE attempts SET version = ?, position = 0, score = 0,
-                   answered = 0, last_correct = 0, last_response = ''
+                   answered = 0, last_correct = 0, last_response = '',
+                   last_timed_out = 0, timer_started_at = 0
                    WHERE id = ? AND quiz_name = ?""",
                 (version, visitor_id, name),
             )
@@ -639,6 +683,49 @@ def quiz_page(name: str):
             and is_media_format(current_question["format"])
             and not media_is_available(current_question)
         )
+        current_timer = question_timer_seconds(current_question)
+
+        # Start a timed question once, server-side. Refreshes and validation
+        # errors therefore do not give the visitor a fresh timer.
+        if (
+            current_question is not None
+            and not state["answered"]
+            and not current_media_missing
+            and current_timer is not None
+            and float(state["timer_started_at"]) <= 0
+        ):
+            connection.execute(
+                """UPDATE attempts SET timer_started_at = ?
+                   WHERE id = ? AND quiz_name = ? AND position = ?
+                   AND answered = 0 AND timer_started_at <= 0""",
+                (time.time(), visitor_id, name, position),
+            )
+            state = connection.execute(
+                "SELECT * FROM attempts WHERE id = ? AND quiz_name = ?", (visitor_id, name)
+            ).fetchone()
+
+        # If someone refreshes or returns after a timer has already expired,
+        # record the failure immediately even if the browser-side timeout POST
+        # never fired (for example because the tab was suspended).
+        if (
+            request.method == "GET"
+            and current_question is not None
+            and not state["answered"]
+            and not current_media_missing
+            and current_timer is not None
+            and float(state["timer_started_at"]) > 0
+            and time.time() >= float(state["timer_started_at"]) + current_timer
+        ):
+            connection.execute(
+                """UPDATE attempts SET answered = 1, last_correct = 0,
+                   last_response = '', last_timed_out = 1
+                   WHERE id = ? AND quiz_name = ? AND position = ?
+                   AND answered = 0""",
+                (visitor_id, name, state["position"]),
+            )
+            state = connection.execute(
+                "SELECT * FROM attempts WHERE id = ? AND quiz_name = ?", (visitor_id, name)
+            ).fetchone()
 
         handled = False
         if request.method == "POST":
@@ -650,7 +737,8 @@ def quiz_page(name: str):
                 if action == "reset":
                     connection.execute(
                         """UPDATE attempts SET position = 0, score = 0, answered = 0,
-                           last_correct = 0, last_response = ''
+                           last_correct = 0, last_response = '', last_timed_out = 0,
+                           timer_started_at = 0
                            WHERE id = ? AND quiz_name = ?""",
                         (visitor_id, name),
                     )
@@ -659,7 +747,8 @@ def quiz_page(name: str):
                 elif action == "next" and state["answered"]:
                     connection.execute(
                         """UPDATE attempts SET position = position + 1, answered = 0,
-                           last_response = '' WHERE id = ? AND quiz_name = ?
+                           last_response = '', last_timed_out = 0, timer_started_at = 0
+                           WHERE id = ? AND quiz_name = ?
                            AND position = ? AND answered = 1""",
                         (visitor_id, name, state["position"]),
                     )
@@ -668,11 +757,32 @@ def quiz_page(name: str):
                 elif action == "skip" and current_media_missing and not state["answered"]:
                     connection.execute(
                         """UPDATE attempts SET position = position + 1, answered = 0,
-                           last_correct = 0, last_response = ''
+                           last_correct = 0, last_response = '', last_timed_out = 0,
+                           timer_started_at = 0
                            WHERE id = ? AND quiz_name = ? AND position = ?""",
                         (visitor_id, name, state["position"]),
                     )
                     handled = True
+
+                elif (
+                    action == "timeout"
+                    and not state["answered"]
+                    and current_question is not None
+                    and not current_media_missing
+                    and current_timer is not None
+                ):
+                    started_at = float(state["timer_started_at"])
+                    if started_at > 0 and time.time() >= started_at + current_timer:
+                        connection.execute(
+                            """UPDATE attempts SET answered = 1, last_correct = 0,
+                               last_response = '', last_timed_out = 1
+                               WHERE id = ? AND quiz_name = ? AND position = ?
+                               AND answered = 0""",
+                            (visitor_id, name, state["position"]),
+                        )
+                        handled = True
+                    else:
+                        error = "The timer is still running."
 
                 elif (
                     action == "submit"
@@ -680,26 +790,48 @@ def quiz_page(name: str):
                     and current_question is not None
                     and not current_media_missing
                 ):
-                    submitted = request.form.get("answer", "")
-                    if not submitted.strip() or len(submitted) > 300:
-                        error = "Please enter an answer (up to 300 characters)."
+                    # The server also enforces the deadline, so submitting just
+                    # after zero cannot beat a delayed browser timeout request.
+                    timer_expired = False
+                    if current_timer is not None:
+                        started_at = float(state["timer_started_at"])
+                        timer_expired = (
+                            started_at > 0 and time.time() >= started_at + current_timer
+                        )
+
+                    if timer_expired:
+                        connection.execute(
+                            """UPDATE attempts SET answered = 1, last_correct = 0,
+                               last_response = '', last_timed_out = 1
+                               WHERE id = ? AND quiz_name = ? AND position = ?
+                               AND answered = 0""",
+                            (visitor_id, name, state["position"]),
+                        )
+                        handled = True
                     else:
-                        if answer_format(current_question["format"]) == "multiple choice":
-                            allowed = [part.strip() for part in current_question["answer"].split("|")]
-                            if submitted not in allowed:
-                                error = "Please select one of the displayed answers."
-                        if error is None:
-                            right = check_answer(current_question, submitted)
-                            connection.execute(
-                                """UPDATE attempts SET score = score + ?, answered = 1,
-                                   last_correct = ?, last_response = ?
-                                   WHERE id = ? AND quiz_name = ? AND position = ? AND answered = 0""",
-                                (
-                                    int(right), int(right), " ".join(submitted.split()),
-                                    visitor_id, name, state["position"],
-                                ),
-                            )
-                            handled = True
+                        submitted = request.form.get("answer", "")
+                        if not submitted.strip() or len(submitted) > 300:
+                            error = "Please enter an answer (up to 300 characters)."
+                        else:
+                            if answer_format(current_question["format"]) == "multiple choice":
+                                allowed = [
+                                    part.strip() for part in current_question["answer"].split("|")
+                                ]
+                                if submitted not in allowed:
+                                    error = "Please select one of the displayed answers."
+                            if error is None:
+                                right = check_answer(current_question, submitted)
+                                connection.execute(
+                                    """UPDATE attempts SET score = score + ?, answered = 1,
+                                       last_correct = ?, last_response = ?, last_timed_out = 0
+                                       WHERE id = ? AND quiz_name = ? AND position = ?
+                                       AND answered = 0""",
+                                    (
+                                        int(right), int(right), " ".join(submitted.split()),
+                                        visitor_id, name, state["position"],
+                                    ),
+                                )
+                                handled = True
 
         state = connection.execute(
             "SELECT * FROM attempts WHERE id = ? AND quiz_name = ?", (visitor_id, name)
@@ -721,6 +853,20 @@ def quiz_page(name: str):
     media_missing = bool(
         question and question_is_media and not media_is_available(question)
     )
+
+    timer_seconds = question_timer_seconds(question)
+    timer_remaining = None
+    if (
+        question
+        and timer_seconds is not None
+        and not media_missing
+        and not state["answered"]
+        and float(state["timer_started_at"]) > 0
+    ):
+        timer_remaining = max(
+            0.0,
+            float(state["timer_started_at"]) + timer_seconds - time.time(),
+        )
 
     options: list[str] = []
     if question and question_answer_format == "multiple choice" and not state["answered"]:
@@ -806,8 +952,11 @@ def quiz_page(name: str):
         media_filename=media_filename,
         media_url=media_url,
         display_media=display_media,
+        timer_seconds=timer_seconds,
+        timer_remaining=timer_remaining,
         last_correct=bool(state["last_correct"]),
         last_response=state["last_response"],
+        last_timed_out=bool(state["last_timed_out"]),
         csrf=state["csrf"],
         error=error,
     ))

@@ -324,3 +324,33 @@ p { line-height: 1.5; }
   background: var(--option-bg);
   overflow-wrap: anywhere;
 }
+
+/* Optional per-question countdown timer */
+.question-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 22px;
+  padding: 9px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--option-bg);
+  color: var(--text);
+  font-weight: 700;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.question-timer strong {
+  font-variant-numeric: tabular-nums;
+  min-width: 2.4ch;
+  display: inline-block;
+}
+.question-timer.timer-warning {
+  border-color: var(--incorrect-edge);
+  background: var(--incorrect);
+}
+.question-timer.timer-expired {
+  border-color: var(--incorrect-edge);
+  background: var(--incorrect);
+  color: var(--text);
+}
+.timer-icon { line-height: 1; }

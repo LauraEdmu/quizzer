@@ -39,7 +39,8 @@ A quiz file is a non-empty JSON array. It may start with an optional **settings*
     "question": "Name the capital of France.",
     "format": "simple",
     "answer": "Paris",
-    "display_answer": "Paris"
+    "display_answer": "Paris",
+    "timer": 15
   },
   {
     "question": "Write the British or American spelling of colour.",
@@ -130,6 +131,7 @@ A quiz file is a non-empty JSON array. It may start with an optional **settings*
 
 - Optional index-0 quiz settings currently support `"colour": "#RRGGBB"`. This changes the quiz theme while that quiz is open. In light mode the selected colour is used as the page background; dark mode derives a dark palette from the same colour. If the settings object is omitted, the normal `#F5A9B8` theme is used.
 - Questions may optionally include `"example": "like this"`. For text-entry questions this becomes the input placeholder as `e.g. like this`. Number questions default to the neutral placeholder `e.g. 42.5` when no example is supplied. Multiple-choice questions do not use `example`.
+- Questions may optionally include `"timer": 15`, where the value is a positive number of seconds. The countdown starts when that question is first displayed and is saved server-side, so refreshing the page does **not** reset it. When it reaches zero, the question is automatically marked incorrect and the normal answer/reveal media are shown, but the app does **not** move to the next question until the visitor presses the usual button. Timers work with normal, audio, video, and image question formats. Missing-media questions are skipped before their timer starts.
 - `simple`: direct comparison ignoring case, leading/trailing whitespace, and repeated whitespace.
 - `multiple choice`: correct choice **first**, followed by incorrect choices separated by `|`. Choices are shuffled consistently per visitor/question.
 - `regex`: `answer` is a Python regular expression with a case-insensitive **full match**. Whitespace in the user's submitted answer is trimmed/collapsed. In JSON, escape regex backslashes (e.g. `"\\s+"`). Only use trusted, admin-authored patterns.
@@ -197,6 +199,7 @@ New quizzes and changes to quiz JSON are loaded automatically without restarting
 - You can restart a quiz while taking it or reset an individual quiz from the main menu; the main menu also has a **Reset all quiz progress** button. Both menu reset actions require a confirmation and a CSRF token.
 - Light/dark mode is remembered in browser `localStorage` and doesn't affect other users.
 - Previously installed single-quiz databases automatically migrate their history to `general` (assuming the original questions are now in `quizzes/general.json`).
+- Existing multi-quiz databases are automatically extended with timer state columns on startup; saved quiz progress is preserved.
 - To clear all progress, shut down the app and delete `data/progress.sqlite3`, `data/progress.sqlite3-wal`, and `data/progress.sqlite3-shm` if present.
 
 For public deployments, place Waitress behind an HTTPS reverse proxy and set `COOKIE_SECURE=1`.
