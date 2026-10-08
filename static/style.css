@@ -248,3 +248,79 @@ p { line-height: 1.5; }
   border-radius: 10px;
   object-fit: contain;
 }
+
+/* Optional per-quiz colour theme. The chosen colour is the light-mode page
+   background; dark mode mixes the same colour into a dark neutral palette. */
+:root.quiz-custom-theme {
+  --bg: var(--quiz-colour);
+  --text: #302731;
+  --card: color-mix(in srgb, var(--quiz-colour) 7%, #ffffff);
+  --edge: color-mix(in srgb, var(--quiz-colour) 28%, #d9d1d8);
+  --muted: color-mix(in srgb, var(--quiz-colour) 20%, #655b65);
+  --input-bg: color-mix(in srgb, var(--quiz-colour) 4%, #ffffff);
+  --option-bg: color-mix(in srgb, var(--quiz-colour) 13%, #ffffff);
+  --option-hover: color-mix(in srgb, var(--quiz-colour) 23%, #ffffff);
+  --accent: color-mix(in srgb, var(--quiz-colour) 25%, #382332);
+  --accent-hover: color-mix(in srgb, var(--quiz-colour) 20%, #2d1c29);
+  --accent-text: #ffffff;
+  --track: color-mix(in srgb, var(--quiz-colour) 25%, #e7e0e6);
+  --shadow: 0 24px 70px #0000002b;
+}
+:root.quiz-custom-theme[data-theme='dark'] {
+  --bg: color-mix(in srgb, var(--quiz-colour) 22%, #17151a);
+  --text: #f6f1f5;
+  --card: color-mix(in srgb, var(--quiz-colour) 12%, #2a262d);
+  --edge: color-mix(in srgb, var(--quiz-colour) 28%, #4b444e);
+  --muted: color-mix(in srgb, var(--quiz-colour) 24%, #c3bac2);
+  --input-bg: color-mix(in srgb, var(--quiz-colour) 8%, #211e24);
+  --option-bg: color-mix(in srgb, var(--quiz-colour) 16%, #342f36);
+  --option-hover: color-mix(in srgb, var(--quiz-colour) 24%, #403941);
+  --accent: color-mix(in srgb, var(--quiz-colour) 35%, #ffffff);
+  --accent-hover: color-mix(in srgb, var(--quiz-colour) 45%, #ffffff);
+  --accent-text: #211c22;
+  --track: color-mix(in srgb, var(--quiz-colour) 20%, #504851);
+  --shadow: 0 25px 80px #0007;
+}
+
+/* Optional media displayed with the revealed answer */
+.display-media-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.display-media-item {
+  padding: 10px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--option-bg);
+}
+.display-audio {
+  display: block;
+  width: 100%;
+  accent-color: var(--accent);
+}
+.display-video {
+  display: block;
+  width: 100%;
+  max-height: 55vh;
+  border-radius: 9px;
+  background: #000;
+}
+.display-image {
+  display: block;
+  max-width: 100%;
+  max-height: 55vh;
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 9px;
+  object-fit: contain;
+}
+.display-media-missing {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--edge);
+  border-radius: 10px;
+  background: var(--option-bg);
+  overflow-wrap: anywhere;
+}

@@ -62,6 +62,11 @@ IMAGE_EXTENSIONS = {
     ".webp", ".avif", ".bmp", ".svg", ".ico",
 }
 MEDIA_FORMATS = AUDIO_FORMATS | VIDEO_FORMATS | IMAGE_FORMATS
+DISPLAY_MEDIA_FIELDS = {
+    "display audio": "audio",
+    "display video": "video",
+    "display image": "image",
+}
 
 app = Flask(__name__)
 app.config.update(
@@ -177,6 +182,46 @@ def audio_question_parts(value: str) -> tuple[str, str] | None:
     return media_question_parts(value)
 
 
+def media_directory(kind: str) -> Path:
+    """Return the on-disk directory for a supported media kind."""
+    return {
+        "audio": AUDIO_DIR,
+        "video": VIDEO_DIR,
+        "image": IMAGE_DIR,
+    }[kind]
+
+
+def validate_media_filename(kind: str, filename: str) -> str | None:
+    """Validate and normalise a direct filename for one media directory."""
+    filename = filename.strip()
+    if media_question_parts(f"x|{filename}") is None:
+        return None
+    if kind == "video" and Path(filename).suffix.casefold() != ".mp4":
+        return None
+    if kind == "image" and Path(filename).suffix.casefold() not in IMAGE_EXTENSIONS:
+        return None
+    return filename
+
+
+def media_version_entry(kind: str, filename: str, role: str) -> dict[str, object]:
+    """Describe a referenced media file for quiz-version invalidation."""
+    path = media_directory(kind) / filename
+    entry: dict[str, object] = {"role": role, "kind": kind, "filename": filename}
+    try:
+        stat = path.stat()
+    except (FileNotFoundError, OSError):
+        entry["exists"] = False
+    else:
+        entry.update(
+            {
+                "exists": path.is_file(),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    return entry
+
+
 def media_kind(question: dict[str, str]) -> str | None:
     """Return 'audio', 'video', or 'image' for a media question."""
     fmt = question.get("format", "")
@@ -197,12 +242,7 @@ def media_file_path(question: dict[str, str]) -> Path | None:
     parts = media_question_parts(question.get("question", ""))
     if parts is None:
         return None
-    directory = {
-        "audio": AUDIO_DIR,
-        "video": VIDEO_DIR,
-        "image": IMAGE_DIR,
-    }[kind]
-    return directory / parts[1]
+    return media_directory(kind) / parts[1]
 
 
 def media_is_available(question: dict[str, str]) -> bool:
@@ -225,7 +265,7 @@ def question_counts(question: dict[str, str]) -> bool:
     """Missing-media questions are shown as skipped but do not count."""
     return not is_media_format(question.get("format", "")) or media_is_available(question)
 
-def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
+def load_quiz(name: str) -> tuple[list[dict[str, str]], dict[str, str], str]:
     """Load a quiz on demand; edits reset progress for that quiz only."""
     if not QUIZ_SLUG_PATTERN.fullmatch(name):
         raise QuizLoadError("Invalid quiz name.")
@@ -239,16 +279,38 @@ def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
         raise QuizLoadError(f"Could not read quizzes/{name}.json: {exc}") from exc
 
     if not isinstance(data, list) or not data:
-        raise QuizLoadError("The quiz must contain a non-empty JSON array of questions.")
+        raise QuizLoadError("The quiz must contain a non-empty JSON array.")
+
+    settings: dict[str, str] = {}
+    questions = data
+    first = data[0]
+    if isinstance(first, dict) and "question" not in first:
+        settings = dict(first)
+        questions = data[1:]
+        if not questions:
+            raise QuizLoadError("A quiz settings entry must be followed by at least one question.")
+
+        colour = settings.get("colour")
+        if colour is not None:
+            if not isinstance(colour, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", colour.strip()):
+                raise QuizLoadError(
+                    "Quiz setting 'colour' must be a six-digit hex colour such as #F5A9B8."
+                )
+            settings["colour"] = colour.strip().upper()
 
     media_version_data: list[dict[str, object]] = []
 
-    for number, item in enumerate(data, start=1):
+    for number, item in enumerate(questions, start=1):
         if not isinstance(item, dict):
             raise QuizLoadError(f"Question {number} must be a JSON object.")
         for field in ("question", "format", "answer", "display_answer"):
             if not isinstance(item.get(field), str) or not item[field].strip():
                 raise QuizLoadError(f"Question {number} requires a non-empty '{field}' string.")
+
+        if "example" in item:
+            if not isinstance(item["example"], str):
+                raise QuizLoadError(f"Question {number}: 'example' must be a string when provided.")
+            item["example"] = item["example"].strip()
 
         item["format"] = " ".join(
             item["format"].strip().lower().replace("_", " ").replace("-", " ").split()
@@ -303,35 +365,47 @@ def load_quiz(name: str) -> tuple[list[dict[str, str]], str]:
                     f"Question {number}: unsupported image extension. "
                     "Use JPG/JPEG/JFIF, PNG/APNG, GIF, WebP, AVIF, BMP, SVG, or ICO."
                 )
-            directory = {
-                "audio": AUDIO_DIR,
-                "video": VIDEO_DIR,
-                "image": IMAGE_DIR,
-            }[kind_name]
-            path = directory / filename
-            entry: dict[str, object] = {"kind": kind_name, "filename": filename}
-            try:
-                stat = path.stat()
-            except (FileNotFoundError, OSError):
-                entry["exists"] = False
-            else:
-                entry.update(
-                    {
-                        "exists": path.is_file(),
-                        "size": stat.st_size,
-                        "mtime_ns": stat.st_mtime_ns,
-                    }
+            media_version_data.append(
+                media_version_entry(kind_name, filename, role="question")
+            )
+
+        for field, display_kind in DISPLAY_MEDIA_FIELDS.items():
+            value = item.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                raise QuizLoadError(
+                    f"Question {number}: '{field}' must be a non-empty filename string when provided."
                 )
-            media_version_data.append(entry)
+
+            filename = validate_media_filename(display_kind, value)
+            if filename is None:
+                if display_kind == "video":
+                    requirement = "an .mp4 filename directly inside quizzes/video"
+                elif display_kind == "image":
+                    requirement = (
+                        "a supported image filename directly inside quizzes/image "
+                        "(JPG/JPEG/JFIF, PNG/APNG, GIF, WebP, AVIF, BMP, SVG, or ICO)"
+                    )
+                else:
+                    requirement = "a filename directly inside quizzes/audio"
+                raise QuizLoadError(
+                    f"Question {number}: '{field}' must be {requirement}."
+                )
+
+            item[field] = filename
+            media_version_data.append(
+                media_version_entry(display_kind, filename, role=field)
+            )
 
     # Include media file presence/metadata in the version. This prevents a score
     # obtained with one question count from being reused if an audio/video/image
     # file is later added, removed, or replaced.
-    version_payload = {"questions": data, "media": media_version_data}
+    version_payload = {"settings": settings, "questions": questions, "media": media_version_data}
     version = hashlib.sha256(
         json.dumps(version_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()[:16]
-    return data, version
+    return questions, settings, version
 
 
 @contextmanager
@@ -527,7 +601,7 @@ def quiz_page(name: str):
         return redirect(url_for("quiz_page", name=slug), code=303)
 
     try:
-        questions, version = load_quiz(name)
+        questions, settings, version = load_quiz(name)
     except QuizLoadError as exc:
         response = make_response(render_template(
             "home.html", error=str(exc), typed_name=name, previous=[], csrf=""
@@ -670,6 +744,32 @@ def quiz_page(name: str):
                 }[current_media_kind]
                 media_url = url_for(endpoint, filename=media_filename, v=version)
 
+    display_media: list[dict[str, object]] = []
+    if question and state["answered"]:
+        endpoint_by_kind = {
+            "audio": "quiz_audio",
+            "video": "quiz_video",
+            "image": "quiz_image",
+        }
+        for field, display_kind in DISPLAY_MEDIA_FIELDS.items():
+            filename = question.get(field)
+            if not filename:
+                continue
+            path = media_directory(display_kind) / filename
+            available = path.is_file()
+            display_media.append(
+                {
+                    "kind": display_kind,
+                    "filename": filename,
+                    "available": available,
+                    "url": (
+                        url_for(endpoint_by_kind[display_kind], filename=filename, v=version)
+                        if available
+                        else None
+                    ),
+                }
+            )
+
     total = sum(1 for item in questions if question_counts(item))
     completed_before = sum(1 for item in questions[:position] if question_counts(item))
     completed = total if finished else completed_before
@@ -681,6 +781,7 @@ def quiz_page(name: str):
     response = make_response(render_template(
         "quiz.html",
         quiz_name=name,
+        quiz_colour=settings.get("colour"),
         total=total,
         raw_total=len(questions),
         position=position,
@@ -704,6 +805,7 @@ def quiz_page(name: str):
         media_missing=media_missing,
         media_filename=media_filename,
         media_url=media_url,
+        display_media=display_media,
         last_correct=bool(state["last_correct"]),
         last_response=state["last_response"],
         csrf=state["csrf"],

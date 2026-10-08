@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="light"{% if quiz_colour %} class="quiz-custom-theme" style="--quiz-colour: {{ quiz_colour }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#F5A9B8">
+  <meta name="theme-color" content="{{ quiz_colour or '#F5A9B8' }}">
   <title>{% block title %}Quiz{% endblock %}</title>
   <script>
     try {

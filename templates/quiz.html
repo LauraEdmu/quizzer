@@ -71,6 +71,35 @@
       <section class="feedback {{ 'incorrect' if not last_correct else '' }}" aria-live="polite">
         <h3>{{ '✓ Correct!' if last_correct else '✗ Not quite' }}</h3>
         <p><strong>Answer:</strong> {{ question.display_answer }}</p>
+
+        {% if display_media %}
+          <div class="display-media-list">
+            {% for media in display_media %}
+              {% if media.available %}
+                <div class="display-media-item display-media-{{ media.kind }}">
+                  {% if media.kind == 'audio' %}
+                    <audio class="display-audio" controls preload="metadata">
+                      <source src="{{ media.url }}">
+                      Your browser does not support the audio player.
+                    </audio>
+                  {% elif media.kind == 'video' %}
+                    <video class="display-video" controls preload="metadata" playsinline>
+                      <source src="{{ media.url }}" type="video/mp4">
+                      Your browser does not support the video player.
+                    </video>
+                  {% elif media.kind == 'image' %}
+                    <img class="display-image" src="{{ media.url }}" alt="Media shown with the answer">
+                  {% endif %}
+                </div>
+              {% else %}
+                <p class="display-media-missing muted">
+                  ⚠ Display {{ media.kind }} unavailable: <code>quizzes/{{ media.kind }}/{{ media.filename }}</code>
+                </p>
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+
         {% if not last_correct and last_response %}
           <p class="muted">You entered: {{ last_response }}</p>
         {% endif %}
@@ -96,11 +125,13 @@
         {% elif question_is_number %}
           <label class="field-label" for="answer">Your answer</label>
           <input class="text-input response" id="answer" type="text" inputmode="decimal" maxlength="300"
-                 name="answer" placeholder="e.g. £1,290.50" autocomplete="off" autofocus required>
+                 name="answer" placeholder="{{ 'e.g. ' ~ question.example if question.example else 'e.g. 42.5' }}"
+                 autocomplete="off" autofocus required>
         {% else %}
           <label class="field-label" for="answer">Your answer</label>
           <input class="text-input response" id="answer" type="text" name="answer"
-                 placeholder="Type your answer…" maxlength="300" autocomplete="off" autofocus required>
+                 placeholder="{{ 'e.g. ' ~ question.example if question.example else 'Type your answer…' }}"
+                 maxlength="300" autocomplete="off" autofocus required>
         {% endif %}
         {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
         <button class="primary" type="submit">Check answer →</button>

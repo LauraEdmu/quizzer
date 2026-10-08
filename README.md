@@ -22,10 +22,13 @@ Place each quiz in `quizzes/<name>.json`, e.g. `quizzes/general.json` or `quizze
 
 When visitors open the site they are prompted to enter the quiz name (`general`, `minecraft`, etc.). The app loads that file, and remembers progress independently for each quiz. Names are case-insensitive; spaces turn into hyphens (entering `movie trivia` loads `quizzes/movie-trivia.json`). Only ASCII letters, numbers, spaces, hyphens and underscores are allowed. The `quizzes/` directory must be writable only by trusted administrators.
 
-A quiz file is a non-empty JSON array of questions:
+A quiz file is a non-empty JSON array. It may start with an optional **settings** object at index 0; settings are not treated as a question or included in the score. For example:
 
 ```json
 [
+  {
+    "colour": "#FFFFFF"
+  },
   {
     "question": "Which planet is known as the Red Planet?",
     "format": "multiple choice",
@@ -125,6 +128,8 @@ A quiz file is a non-empty JSON array of questions:
 ]
 ```
 
+- Optional index-0 quiz settings currently support `"colour": "#RRGGBB"`. This changes the quiz theme while that quiz is open. In light mode the selected colour is used as the page background; dark mode derives a dark palette from the same colour. If the settings object is omitted, the normal `#F5A9B8` theme is used.
+- Questions may optionally include `"example": "like this"`. For text-entry questions this becomes the input placeholder as `e.g. like this`. Number questions default to the neutral placeholder `e.g. 42.5` when no example is supplied. Multiple-choice questions do not use `example`.
 - `simple`: direct comparison ignoring case, leading/trailing whitespace, and repeated whitespace.
 - `multiple choice`: correct choice **first**, followed by incorrect choices separated by `|`. Choices are shuffled consistently per visitor/question.
 - `regex`: `answer` is a Python regular expression with a case-insensitive **full match**. Whitespace in the user's submitted answer is trimmed/collapsed. In JSON, escape regex backslashes (e.g. `"\\s+"`). Only use trusted, admin-authored patterns.
@@ -149,10 +154,40 @@ A quiz file is a non-empty JSON array of questions:
   - `image multiple choice`: same rule as `multiple choice`; the **first** `|`-separated option is correct and the choices are shuffled before display.
 - If an image file is missing, the visitor is shown an explicit **Image unavailable — question skipped** message. The question is excluded from the quiz total and cannot affect the score. Image filenames cannot contain `/` or `\` path separators.
 - `display_answer`: what visitors see after they submit an answer.
+- Questions may also include optional answer-reveal media fields. These appear only **after the visitor submits their answer**, alongside `display_answer`:
+  - `"display audio": "answer.mp3"` loads from `quizzes/audio/`.
+  - `"display video": "answer.mp4"` loads from `quizzes/video/`; video display files must be `.mp4`.
+  - `"display image": "answer.png"` loads from `quizzes/image/` and supports the same image extensions as image questions.
+  - More than one display-media field may be used on the same question. Missing display media shows a small **Display … unavailable** message, but it does **not** skip the question or affect scoring. Filenames must refer directly to the appropriate media directory and cannot contain path separators.
+
+For example, a normal text question can reveal an image with its answer:
+
+```json
+{
+  "question": "Which planet is known as the Red Planet?",
+  "format": "simple",
+  "answer": "Mars",
+  "display_answer": "Mars",
+  "display image": "mars.png"
+}
+```
+
+Or an audio question can reveal a second audio clip and a video explanation:
+
+```json
+{
+  "question": "Name this sound|mystery.mp3",
+  "format": "audio regex",
+  "answer": "thunder",
+  "display_answer": "Thunder",
+  "display audio": "thunder-full.mp3",
+  "display video": "thunder-explanation.mp4"
+}
+```
 
 **Editing quizzes**
 
-New quizzes and changes to quiz JSON are loaded automatically without restarting the server. Changing a quiz file resets progress for **that quiz only**. Adding, removing, or replacing an audio, video, or image file referenced by that quiz also resets that quiz's progress so its score and question total stay consistent. Renaming a quiz file creates a new quiz name with separate progress.
+New quizzes and changes to quiz JSON are loaded automatically without restarting the server. Changing a quiz file resets progress for **that quiz only**. Adding, removing, or replacing an audio, video, or image file referenced by that quiz — including optional display media — also resets that quiz's progress so its question/reveal state stays consistent. Renaming a quiz file creates a new quiz name with separate progress.
 
 **Progress, themes and privacy**
 
